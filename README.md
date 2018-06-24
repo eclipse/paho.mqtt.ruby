@@ -14,7 +14,7 @@ Paho reflects the inherent physical and cost constraints of device connectivity.
 
 - Project Website: [https://www.eclipse.org/paho](https://www.eclipse.org/paho)
 - Eclipse Project Information: [https://projects.eclipse.org/projects/iot.paho](https://projects.eclipse.org/projects/iot.paho)
-- Paho Ruby Client Page: [https://eclipse.org/paho/clients/java/](https://eclipse.org/paho/clients/ruby)
+- Paho Ruby Client Page: ~~[https://eclipse.org/paho/clients/java/](https://eclipse.org/paho/clients/ruby)~~ (todo)
 - GitHub: [https://github.com/eclipse/paho.mqtt.ruby](https://github.com/eclipse/paho.mqtt.ruby)
 - Twitter: [@eclipsepaho](https://twitter.com/eclipsepaho)
 - Issues: [https://github.com/eclipse/paho.mqtt.ruby/issues](https://github.com/eclipse/paho.mqtt.ruby/issues)
