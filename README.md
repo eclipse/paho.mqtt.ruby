@@ -1,4 +1,4 @@
-# Eclipse Paho Java Client
+# Eclipse Paho Ruby Client
 
 The following file describes the Paho Mqtt client API for the ruby programming language. It enables applications to connect to an MQTT message broker threw the [MQTT](http://mqtt.org/) protocol (versions 3.1.1). MQTT is a lightweight protocol designed for IoT/M2M. A Mqtt client can connect to a message broker in order to publish and received data contained in short messages. The messages are exchanged on topics where the client has to subscribe for receiving message. This client was contributed to the Eclipse Foundation by Ruby development Inc. and includes code contributed from the [ruby-mqtt](https://github.com/njh/ruby-mqtt/) library.
 
@@ -14,10 +14,10 @@ Paho reflects the inherent physical and cost constraints of device connectivity.
 
 - Project Website: [https://www.eclipse.org/paho](https://www.eclipse.org/paho)
 - Eclipse Project Information: [https://projects.eclipse.org/projects/iot.paho](https://projects.eclipse.org/projects/iot.paho)
-- Paho Java Client Page: [https://eclipse.org/paho/clients/java/](https://eclipse.org/paho/clients/java)
-- GitHub: [https://github.com/eclipse/paho.mqtt.java](https://github.com/eclipse/paho.mqtt.java)
+- Paho Ruby Client Page: ~~[https://eclipse.org/paho/clients/java/](https://eclipse.org/paho/clients/ruby)~~ (todo)
+- GitHub: [https://github.com/eclipse/paho.mqtt.ruby](https://github.com/eclipse/paho.mqtt.ruby)
 - Twitter: [@eclipsepaho](https://twitter.com/eclipsepaho)
-- Issues: [https://github.com/eclipse/paho.mqtt.java/issues](https://github.com/eclipse/paho.mqtt.java/issues)
+- Issues: [https://github.com/eclipse/paho.mqtt.ruby/issues](https://github.com/eclipse/paho.mqtt.ruby/issues)
 - Mailing-list: [https://dev.eclipse.org/mailman/listinfo/paho-dev](https://dev.eclipse.org/mailman/listinfo/paho-dev)
 
 
