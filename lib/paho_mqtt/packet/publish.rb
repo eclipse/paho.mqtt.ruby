@@ -39,7 +39,7 @@ module PahoMqtt
 
       # Default attribute values
       ATTR_DEFAULTS = {
-        :topic => nil,
+        :topic   => nil,
         :payload => ''
       }
 
@@ -81,8 +81,9 @@ module PahoMqtt
       # Set the Quality of Service level (0/1/2)
       def qos=(arg)
         @qos = arg.to_i
-        if @qos < 0 or @qos > 2
-          raise "Invalid QoS value: #{@qos}"
+        if @qos < 0 || @qos > 2
+          raise PahoMqtt::PacketFormatException.new(
+                  "Invalid QoS value: #{@qos}")
         else
           @flags[1] = (arg & 0x01 == 0x01)
           @flags[2] = (arg & 0x02 == 0x02)
@@ -92,8 +93,9 @@ module PahoMqtt
       # Get serialisation of packet's body
       def encode_body
         body = ''
-        if @topic.nil? or @topic.to_s.empty?
-          raise "Invalid topic name when serialising packet"
+        if @topic.nil? || @topic.to_s.empty?
+          raise PahoMqtt::PacketFormatException.new(
+                  "Invalid topic name when serialising packet")
         end
         body += encode_string(@topic)
         body += encode_short(@id) unless qos == 0
@@ -104,8 +106,8 @@ module PahoMqtt
       # Parse the body (variable header and payload) of a Publish packet
       def parse_body(buffer)
         super(buffer)
-        @topic = shift_string(buffer)
-        @id = shift_short(buffer) unless qos == 0
+        @topic   = shift_string(buffer)
+        @id      = shift_short(buffer) unless qos == 0
         @payload = buffer
       end
 
@@ -113,10 +115,12 @@ module PahoMqtt
       # @private
       def validate_flags
         if qos == 3
-          raise "Invalid packet: QoS value of 3 is not allowed"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Invalid packet: QoS value of 3 is not allowed")
         end
-        if qos == 0 and duplicate
-          raise "Invalid packet: DUP cannot be set for QoS 0"
+        if qos == 0 && duplicate
+          raise PahoMqtt::PacketFormatException.new(
+                  "Invalid packet: DUP cannot be set for QoS 0")
         end
       end
 
@@ -135,7 +139,7 @@ module PahoMqtt
 
       def inspect_payload
         str = payload.to_s
-        if str.bytesize < 16 and str =~ /^[ -~]*$/
+        if str.bytesize < 16 && str =~ /^[ -~]*$/
           "'#{str}'"
         else
           "... (#{str.bytesize} bytes)"

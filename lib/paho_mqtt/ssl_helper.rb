@@ -18,21 +18,40 @@ module PahoMqtt
   module SSLHelper
     extend self
 
-    def config_ssl_context(cert_path, key_path, ca_path=nil)
+    def config_ssl_context(cert_path=nil, key_path=nil, ca_path=nil)
       ssl_context = OpenSSL::SSL::SSLContext.new
       set_cert(cert_path, ssl_context)
       set_key(key_path, ssl_context)
       set_root_ca(ca_path, ssl_context)
-      #ssl_context.verify_mode = OpenSSL::SSL::VERIFY_PEER unless ca_path.nil?
+      # ssl_context.verify_mode = OpenSSL::SSL::VERIFY_PEER unless ca_path.nil?
       ssl_context
     end
 
-    def set_cert(cert_path, ssl_context)
-      ssl_context.cert = OpenSSL::X509::Certificate.new(File.read(cert_path))
+    def set_cert(cert_path=nil, ssl_context)
+      unless cert_path.nil?
+        ssl_context.cert = OpenSSL::X509::Certificate.new(File.read(cert_path))
+      end
     end
 
-    def set_key(key_path, ssl_context)
-      ssl_context.key = OpenSSL::PKey::RSA.new(File.read(key_path))
+    def set_key(key_path=nil, ssl_context)
+      unless key_path.nil?
+        return MQTT_ERR_SUCCESS if try_rsa_key(key_path, ssl_context) == MQTT_ERR_SUCCESS
+        begin
+          ssl_context.key = OpenSSL::PKey::EC.new(File.read(key_path))
+          return MQTT_ERR_SUCCESS
+        rescue OpenSSL::PKey::ECError
+          raise NotSupportedEncryptionException.new("Could not support the type of the provided key (supported: RSA and EC)")
+        end
+      end
+    end
+
+    def try_rsa_key(key_path, ssl_context)
+      begin
+        ssl_context.key = OpenSSL::PKey::RSA.new(File.read(key_path))
+        return MQTT_ERR_SUCCESS
+      rescue OpenSSL::PKey::RSAError
+        return MQTT_ERR_FAIL
+      end
     end
 
     def set_root_ca(ca_path, ssl_context)
