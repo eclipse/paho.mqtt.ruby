@@ -31,7 +31,8 @@ module PahoMqtt
       def parse_body(buffer)
         super(buffer)
         unless buffer.empty?
-          raise "Extra bytes at end of Ping Response packet"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Extra bytes at end of Ping Response packet")
         end
       end
     end

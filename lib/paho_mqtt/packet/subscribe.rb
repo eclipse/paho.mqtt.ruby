@@ -66,13 +66,14 @@ module PahoMqtt
             # Peek at the next item in the array, and remove it if it is an integer
             if input.first.is_a?(Integer)
               qos = input.shift
-              @topics << [item,qos]
+              @topics << [item, qos]
             else
-              @topics << [item,0]
+              @topics << [item, 0]
             end
           else
             # Meh?
-            raise "Invalid topics input: #{value.inspect}"
+            raise PahoMqtt::PacketFormatException.new(
+                    "Invalid topics input: #{value.inspect}")
           end
         end
         @topics
@@ -81,7 +82,8 @@ module PahoMqtt
       # Get serialisation of packet's body
       def encode_body
         if @topics.empty?
-          raise "no topics given when serialising packet"
+          raise PahoMqtt::PacketFormatException.new(
+                  "No topics given when serialising packet")
         end
         body = encode_short(@id)
         topics.each do |item|
@@ -99,7 +101,7 @@ module PahoMqtt
         while(buffer.bytesize>0)
           topic_name = shift_string(buffer)
           topic_qos = shift_byte(buffer)
-          @topics << [topic_name,topic_qos]
+          @topics << [topic_name, topic_qos]
         end
       end
 
@@ -107,7 +109,8 @@ module PahoMqtt
       # @private
       def validate_flags
         if @flags != [false, true, false, false]
-          raise "Invalid flags in SUBSCRIBE packet header"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Invalid flags in SUBSCRIBE packet header")
         end
       end
 
@@ -115,7 +118,7 @@ module PahoMqtt
       def inspect
         _str = "\#<#{self.class}: 0x%2.2X, %s>" % [
           id,
-          topics.map {|t| "'#{t[0]}':#{t[1]}"}.join(', ')
+          topics.map { |t| "'#{t[0]}':#{t[1]}" }.join(', ')
         ]
       end
     end

@@ -28,6 +28,8 @@ module PahoMqtt
     attr_accessor :mqtt_version
     attr_accessor :clean_session
     attr_accessor :persistent
+    attr_accessor :reconnect_limit
+    attr_accessor :reconnect_delay
     attr_accessor :blocking
     attr_accessor :client_id
     attr_accessor :username
@@ -49,17 +51,19 @@ module PahoMqtt
     attr_reader :ssl_context
 
     def initialize(*args)
-      @last_ping_resp = Time.now
-      @last_packet_id = 0
-      @ssl_context = nil
-      @sender = nil
-      @handler = Handler.new
-      @connection_helper = nil
-      @connection_state = MQTT_CS_DISCONNECT
+      @last_ping_resp         = Time.now
+      @last_packet_id         = 0
+      @ssl_context            = nil
+      @sender                 = nil
+      @handler                = Handler.new
+      @connection_helper      = nil
+      @connection_state       = MQTT_CS_DISCONNECT
       @connection_state_mutex = Mutex.new
-      @mqtt_thread = nil
-      @reconnect_thread = nil
-      @id_mutex = Mutex.new
+      @mqtt_thread            = nil
+      @reconnect_thread       = nil
+      @id_mutex               = Mutex.new
+      @reconnect_limit        = 3
+      @reconnect_delay        = 5
 
       if args.last.is_a?(Hash)
         attr = args.pop
@@ -100,17 +104,19 @@ module PahoMqtt
 
     def connect(host=@host, port=@port, keep_alive=@keep_alive, persistent=@persistent, blocking=@blocking)
       @persistent = persistent
-      @blocking = blocking
-      @host = host
-      @port = port.to_i
+      @blocking   = blocking
+      @host       = host
+      @port       = port.to_i
       @keep_alive = keep_alive
-      @connection_state_mutex.synchronize {
+      @connection_state_mutex.synchronize do
         @connection_state = MQTT_CS_NEW
-      }
+      end
       @mqtt_thread.kill unless @mqtt_thread.nil?
-      init_connection
+
+      init_connection unless reconnect?
       @connection_helper.send_connect(session_params)
       begin
+        init_pubsub
         @connection_state = @connection_helper.do_connect(reconnect?)
         if connected?
           build_pubsub
@@ -130,7 +136,7 @@ module PahoMqtt
           end
         rescue SystemCallError => e
           if @persistent
-            reconnect()
+            reconnect
           else
             raise e
           end
@@ -146,9 +152,9 @@ module PahoMqtt
       Thread.current == @reconnect_thread
     end
 
-    def loop_write(max_packet=MAX_WRITING)
+    def loop_write
       begin
-        @sender.writing_loop(max_packet)
+        @sender.writing_loop
       rescue WritingException
         if check_persistence
           reconnect
@@ -158,16 +164,19 @@ module PahoMqtt
       end
     end
 
-    def loop_read(max_packet=MAX_READ)
-      max_packet.times do
-        begin
-          @handler.receive_packet
-        rescue ReadingException
-          if check_persistence
-            reconnect
-          else
-            raise ReadingException
-          end
+    def loop_read
+      begin
+        MAX_QUEUE.times do
+          result = @handler.receive_packet
+          break if result.nil?
+        end
+      rescue FullQueueException
+        PahoMqtt.logger.warn("Early exit in reading loop. The maximum packets have been reach for #{packet.type_name}") if PahoMqtt.logger?
+      rescue ReadingException
+        if check_persistence
+          reconnect
+        else
+          raise ReadingException
         end
       end
     end
@@ -176,7 +185,6 @@ module PahoMqtt
       loop_read
       loop_write
       loop_misc
-      sleep LOOP_TEMPO
     end
 
     def loop_misc
@@ -185,32 +193,38 @@ module PahoMqtt
       end
       @publisher.check_waiting_publisher
       @subscriber.check_waiting_subscriber
+      sleep SELECT_TIMEOUT
     end
 
     def reconnect
       @reconnect_thread = Thread.new do
-        RECONNECT_RETRY_TIME.times do
-          PahoMqtt.logger.debug("New reconnect atempt...") if PahoMqtt.logger?
+        counter = 0
+        while (@reconnect_limit >= counter || @reconnect_limit == -1) do
+          counter += 1
+          PahoMqtt.logger.debug("New reconnect attempt...") if PahoMqtt.logger?
           connect
           if connected?
             break
           else
-            sleep RECONNECT_RETRY_TIME
+            sleep @reconnect_delay
           end
         end
         unless connected?
-          PahoMqtt.logger.error("Reconnection atempt counter is over.(#{RECONNECT_RETRY_TIME} times)") if PahoMqtt.logger?
+          PahoMqtt.logger.error("Reconnection attempt counter is over. (#{@reconnect_limit} times)") if PahoMqtt.logger?
           disconnect(false)
         end
       end
     end
 
     def disconnect(explicit=true)
-      @last_packet_id = 0 if explicit
       @connection_helper.do_disconnect(@publisher, explicit, @mqtt_thread)
-      @connection_state_mutex.synchronize {
+      @connection_state_mutex.synchronize do
         @connection_state = MQTT_CS_DISCONNECT
-      }
+      end
+      if explicit && @clean_session
+        @last_packet_id = 0
+        @subscriber.clear_queue
+      end
       MQTT_ERR_SUCCESS
     end
 
@@ -221,7 +235,6 @@ module PahoMqtt
       end
       id = next_packet_id
       @publisher.send_publish(topic, payload, retain, qos, id)
-      MQTT_ERR_SUCCESS
     end
 
     def subscribe(*topics)
@@ -233,7 +246,6 @@ module PahoMqtt
         MQTT_ERR_SUCCESS
       rescue ProtocolViolation
         PahoMqtt.logger.error("Subscribe topics need one topic or a list of topics.") if PahoMqtt.logger?
-        disconnect(false)
         raise ProtocolViolation
       end
     end
@@ -246,8 +258,7 @@ module PahoMqtt
         end
         MQTT_ERR_SUCCESS
       rescue ProtocolViolation
-        PahoMqtt.logger.error("Unsubscribe need at least one topics.") if PahoMqtt.logger?
-        disconnect(false)
+        PahoMqtt.logger.error("Unsubscribe need at least one topic.") if PahoMqtt.logger?
         raise ProtocolViolation
       end
     end
@@ -348,58 +359,53 @@ module PahoMqtt
     private
 
     def next_packet_id
-      @id_mutex.synchronize {
-        @last_packet_id = ( @last_packet_id || 0 ).next
-      }
+      @id_mutex.synchronize do
+        @last_packet_id = 0 if @last_packet_id >= MAX_PACKET_ID
+        @last_packet_id = @last_packet_id.next
+      end
     end
 
     def downgrade_version
-      PahoMqtt.logger.debug("Unable to connect to the server with the version #{@mqtt_version}, trying 3.1") if PahoMqtt.logger?
+      PahoMqtt.logger.debug("Connection refused: unacceptable protocol version #{@mqtt_version}, trying 3.1") if PahoMqtt.logger?
       if @mqtt_version != "3.1"
         @mqtt_version = "3.1"
         connect(@host, @port, @keep_alive)
       else
-        raise "Unsupported MQTT version"
+        raise ProtocolVersionException.new("Unsupported MQTT version")
       end
+    end
+
+    def init_pubsub
+      @subscriber.nil? ? @subscriber = Subscriber.new(@sender) : @subscriber.sender = @sender
+      @publisher.nil? ? @publisher = Publisher.new(@sender) : @publisher.sender = @sender
+      @handler.config_pubsub(@publisher, @subscriber)
     end
 
     def build_pubsub
-      if @subscriber.nil?
-        @subscriber = Subscriber.new(@sender)
-      else
-        @subscriber.sender = @sender
-        @subscriber.config_subscription(next_packet_id)
-      end
-      if @publisher.nil?
-        @publisher = Publisher.new(@sender)
-      else
-        @publisher.sender = @sender
-        @publisher.config_all_message_queue
-      end
-      @handler.config_pubsub(@publisher, @subscriber)
-      @sender.flush_waiting_packet(true)
+      @subscriber.config_subscription(next_packet_id)
+      @sender.flush_waiting_packet
+      @publisher.config_all_message_queue
     end
 
     def init_connection
-      unless reconnect?
-        @connection_helper = ConnectionHelper.new(@host, @port, @ssl, @ssl_context, @ack_timeout)
-        @connection_helper.handler = @handler
-        @sender = @connection_helper.sender
-      end
-        @connection_helper.setup_connection
+      @connection_helper         = ConnectionHelper.new(@host, @port, @ssl, @ssl_context, @ack_timeout)
+      @connection_helper.handler = @handler
+      @sender                    = @connection_helper.sender
     end
 
     def session_params
-      {:version => @mqtt_version,
-       :clean_session => @clean_session,
-       :keep_alive => @keep_alive,
-       :client_id => @client_id,
-       :username => @username,
-       :password => @password,
-       :will_topic => @will_topic,
-       :will_payload => @will_payload,
-       :will_qos => @will_qos,
-       :will_retain => @will_retain}
+      {
+        :version       => @mqtt_version,
+        :clean_session => @clean_session,
+        :keep_alive    => @keep_alive,
+        :client_id     => @client_id,
+        :username      => @username,
+        :password      => @password,
+        :will_topic    => @will_topic,
+        :will_payload  => @will_payload,
+        :will_qos      => @will_qos,
+        :will_retain   => @will_retain
+      }
     end
 
     def check_persistence

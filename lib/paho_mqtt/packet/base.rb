@@ -38,8 +38,8 @@ module PahoMqtt
 
       # Default attribute values
       ATTR_DEFAULTS = {
-        :version => '3.1.0',
-        :id => 0,
+        :version     => '3.1.0',
+        :id          => 0,
         :body_length => nil
       }
 
@@ -49,6 +49,7 @@ module PahoMqtt
         packet = create_from_header(
           read_byte(socket)
         )
+
         unless packet.nil?
           packet.validate_flags
 
@@ -61,22 +62,22 @@ module PahoMqtt
             body_length += ((digit & 0x7F) * multiplier)
             multiplier *= 0x80
             pos += 1
-          end while ((digit & 0x80) != 0x00) and pos <= 4
+          end while ((digit & 0x80) != 0x00) && pos <= 4
 
           # Store the expected body length in the packet
           packet.instance_variable_set('@body_length', body_length)
 
           # Read in the packet body
-          packet.parse_body( socket.read(body_length) )
+          packet.parse_body(socket.read(body_length))
         end
-        return packet
+        packet
       end
 
       # Parse buffer into new packet object
       def self.parse(buffer)
         packet = parse_header(buffer)
         packet.parse_body(buffer)
-        return packet
+        packet
       end
 
       # Parse the header and create a new packet object of the correct type
@@ -84,7 +85,8 @@ module PahoMqtt
       def self.parse_header(buffer)
         # Check that the packet is a long as the minimum packet size
         if buffer.bytesize < 2
-          raise "Invalid packet: less than 2 bytes long"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Invalid packet: less than 2 bytes long")
         end
 
         # Create a new packet object
@@ -98,13 +100,14 @@ module PahoMqtt
         pos = 1
         begin
           if buffer.bytesize <= pos
-            raise "The packet length header is incomplete"
+            raise PahoMqtt::PacketFormatException.new(
+                    "The packet length header is incomplete")
           end
           digit = bytes[pos]
           body_length += ((digit & 0x7F) * multiplier)
           multiplier *= 0x80
           pos += 1
-        end while ((digit & 0x80) != 0x00) and pos <= 4
+        end while ((digit & 0x80) != 0x00) && pos <= 4
 
         # Store the expected body length in the packet
         packet.instance_variable_set('@body_length', body_length)
@@ -112,7 +115,7 @@ module PahoMqtt
         # Delete the fixed header from the raw packet passed in
         buffer.slice!(0...pos)
 
-        return packet
+        packet
       end
 
       # Create a new packet object from the first byte of a MQTT packet
@@ -122,7 +125,8 @@ module PahoMqtt
           type_id = ((byte & 0xF0) >> 4)
           packet_class = PahoMqtt::PACKET_TYPES[type_id]
           if packet_class.nil?
-            raise "Invalid packet type identifier: #{type_id}"
+            raise PahoMqtt::PacketFormatException.new(
+                    "Invalid packet type identifier: #{type_id}")
           end
 
           # Convert the last 4 bits of byte into array of true/false
@@ -143,7 +147,7 @@ module PahoMqtt
       # Set packet attributes from a hash of attribute names and values
       def update_attributes(attr={})
         attr.each_pair do |k,v|
-          if v.is_a?(Array) or v.is_a?(Hash)
+          if v.is_a?(Array) || v.is_a?(Hash)
             send("#{k}=", v.dup)
           else
             send("#{k}=", v)
@@ -155,9 +159,10 @@ module PahoMqtt
       def type_id
         index = PahoMqtt::PACKET_TYPES.index(self.class)
         if index.nil?
-          raise "Invalid packet type: #{self.class}"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Invalid packet type: #{self.class}")
         end
-        return index
+        index
       end
 
       # Get the name of the packet type as a string in capitals
@@ -181,7 +186,8 @@ module PahoMqtt
       # Parse the body (variable header and payload) of a packet
       def parse_body(buffer)
         if buffer.bytesize != body_length
-          raise "Failed to parse packet - input buffer (#{buffer.bytesize}) is not the same as the body length header (#{body_length})"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Failed to parse packet - input buffer (#{buffer.bytesize}) is not the same as the body length header (#{body_length})")
         end
       end
 
@@ -207,7 +213,8 @@ module PahoMqtt
         # Check that that packet isn't too big
         body_length = body.bytesize
         if body_length > 268435455
-          raise "Error serialising packet: body is more than 256MB"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Error serialising packet: body is more than 256MB")
         end
 
         # Build up the body length field bytes
@@ -227,7 +234,8 @@ module PahoMqtt
       # @private
       def validate_flags
         if flags != [false, false, false, false]
-          raise "Invalid flags in #{type_name} packet header"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Invalid flags in #{type_name} packet header")
         end
       end
 
@@ -245,7 +253,7 @@ module PahoMqtt
 
       # Encode an array of bits and return them
       def encode_bits(bits)
-        [bits.map{|b| b ? '1' : '0'}.join].pack('b*')
+        [bits.map { |b| b ? '1' : '0' }.join].pack('b*')
       end
 
       # Encode a 16-bit unsigned integer and return it
@@ -276,7 +284,7 @@ module PahoMqtt
 
       # Remove 8 bits from the front of buffer
       def shift_bits(buffer)
-        buffer.slice!(0...1).unpack('b8').first.split('').map {|b| b == '1'}
+        buffer.slice!(0...1).unpack('b8').first.split('').map { |b| b == '1' }
       end
 
       # Remove n bytes from the front of buffer
