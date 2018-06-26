@@ -32,7 +32,8 @@ module PahoMqtt
         super(buffer)
         @id = shift_short(buffer)
         unless buffer.empty?
-          raise "Extra bytes at end of Publish Received packet"
+          raise PahoMqtt::PacketFormatException.new(
+                  "Extra bytes at end of Publish Received packet")
         end
       end
 

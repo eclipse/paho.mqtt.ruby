@@ -13,20 +13,19 @@
 #    Pierre Goudet - initial committer
 #    And Others.
 
-
 module PahoMqtt
   class Publisher
 
     def initialize(sender)
-      @waiting_puback = []
-      @waiting_pubrec = []
-      @waiting_pubrel = []
+      @waiting_puback  = []
+      @waiting_pubrec  = []
+      @waiting_pubrel  = []
       @waiting_pubcomp = []
-      @puback_mutex = Mutex.new
-      @pubrec_mutex = Mutex.new
-      @pubrel_mutex = Mutex.new
-      @pubcomp_mutex = Mutex.new
-      @sender = sender
+      @puback_mutex    = Mutex.new
+      @pubrec_mutex    = Mutex.new
+      @pubrel_mutex    = Mutex.new
+      @pubcomp_mutex   = Mutex.new
+      @sender          = sender
     end
 
     def sender=(sender)
@@ -35,22 +34,34 @@ module PahoMqtt
 
     def send_publish(topic, payload, retain, qos, new_id)
       packet = PahoMqtt::Packet::Publish.new(
-        :id => new_id,
-        :topic => topic,
+        :id      => new_id,
+        :topic   => topic,
         :payload => payload,
-        :retain => retain,
-        :qos => qos
+        :retain  => retain,
+        :qos     => qos
       )
+      begin
+        case qos
+        when 1
+          push_queue(@waiting_puback, @puback_mutex, MAX_QUEUE, packet, new_id)
+        when 2
+          push_queue(@waiting_pubrec, @pubrec_mutex, MAX_QUEUE, packet, new_id)
+        end
+      rescue FullQueueException
+        PahoMqtt.logger.warn("PUBLISH queue is full, waiting for publishing #{packet.inspect}") if PahoMqtt.logger?
+        sleep SELECT_TIMEOUT
+        retry
+      end
       @sender.append_to_writing(packet)
-      case qos
-      when 1
-        @puback_mutex.synchronize{
-          @waiting_puback.push({:id => new_id, :packet => packet, :timestamp => Time.now})
-        }
-      when 2
-        @pubrec_mutex.synchronize{
-          @waiting_pubrec.push({:id => new_id, :packet => packet, :timestamp => Time.now})
-        }
+      MQTT_ERR_SUCCESS
+    end
+
+    def push_queue(waiting_queue, queue_mutex, max_packet, packet, new_id)
+      if waiting_queue.length >= max_packet
+        raise FullQueueException
+      end
+      queue_mutex.synchronize do
+        waiting_queue.push(:id => new_id, :packet => packet, :timestamp => Time.now)
       end
       MQTT_ERR_SUCCESS
     end
@@ -63,8 +74,8 @@ module PahoMqtt
       when 2
         send_pubrec(packet_id)
       else
-        @logger.error("The packet qos value is invalid in publish.") if logger?
-        raise PacketException
+        PahoMqtt.logger.error("The packet QoS value is invalid in publish.") if PahoMqtt.logger?
+        raise PacketException.new('Invalid publish QoS value')
       end
       MQTT_ERR_SUCCESS
     end
@@ -78,48 +89,42 @@ module PahoMqtt
     end
 
     def do_puback(packet_id)
-      @puback_mutex.synchronize{
+      @puback_mutex.synchronize do
         @waiting_puback.delete_if { |pck| pck[:id] == packet_id }
-      }
-      MQTT_ERR_SUCCESS      
+      end
+      MQTT_ERR_SUCCESS
     end
-    
+
     def send_pubrec(packet_id)
       packet = PahoMqtt::Packet::Pubrec.new(
         :id => packet_id
       )
+      push_queue(@waiting_pubrel, @pubrel_mutex, MAX_QUEUE, packet, packet_id)
       @sender.append_to_writing(packet)
-      @pubrel_mutex.synchronize{
-        @waiting_pubrel.push({:id => packet_id , :packet => packet, :timestamp => Time.now})
-      }
       MQTT_ERR_SUCCESS
     end
 
     def do_pubrec(packet_id)
-      @pubrec_mutex.synchronize {
+      @pubrec_mutex.synchronize do
         @waiting_pubrec.delete_if { |pck| pck[:id] == packet_id }
-      }
+      end
       send_pubrel(packet_id)
-      MQTT_ERR_SUCCESS
     end
 
     def send_pubrel(packet_id)
       packet = PahoMqtt::Packet::Pubrel.new(
         :id => packet_id
       )
+      push_queue(@waiting_pubcomp, @pubcomp_mutex, MAX_QUEUE, packet, packet_id)
       @sender.append_to_writing(packet)
-      @pubcomp_mutex.synchronize{
-        @waiting_pubcomp.push({:id => packet_id, :packet => packet, :timestamp => Time.now})
-      }
       MQTT_ERR_SUCCESS
     end
 
     def do_pubrel(packet_id)
-      @pubrel_mutex.synchronize {
+      @pubrel_mutex.synchronize do
         @waiting_pubrel.delete_if { |pck| pck[:id] == packet_id }
-      }
+      end
       send_pubcomp(packet_id)
-      MQTT_ERR_SUCCESS
     end
 
     def send_pubcomp(packet_id)
@@ -131,52 +136,47 @@ module PahoMqtt
     end
 
     def do_pubcomp(packet_id)
-      @pubcomp_mutex.synchronize {
+      @pubcomp_mutex.synchronize do
         @waiting_pubcomp.delete_if { |pck| pck[:id] == packet_id }
-      }
+      end
       MQTT_ERR_SUCCESS
     end
 
     def config_all_message_queue
-      config_message_queue(@waiting_puback, @puback_mutex, MAX_PUBACK)
-      config_message_queue(@waiting_pubrec, @pubrec_mutex, MAX_PUBREC)
-      config_message_queue(@waiting_pubrel, @pubrel_mutex, MAX_PUBREL)
-      config_message_queue(@waiting_pubcomp, @pubcomp_mutex, MAX_PUBCOMP)
+      config_message_queue(@waiting_puback, @puback_mutex)
+      config_message_queue(@waiting_pubrec, @pubrec_mutex)
+      config_message_queue(@waiting_pubrel, @pubrel_mutex)
+      config_message_queue(@waiting_pubcomp, @pubcomp_mutex)
     end
 
-    def config_message_queue(queue, mutex, max_packet)
-      mutex.synchronize {
-        cnt = 0 
+    def config_message_queue(queue, mutex)
+      mutex.synchronize do
         queue.each do |pck|
-          pck[:packet].dup ||= true
-          if cnt <= max_packet
-            @sender.append_to_writing(pck[:packet])
-            cnt += 1
-          end
+          pck[:timestamp] = Time.now
         end
-      }
+      end
     end
 
     def check_waiting_publisher
-      @sender.check_ack_alive(@waiting_puback, @puback_mutex, MAX_PUBACK)
-      @sender.check_ack_alive(@waiting_pubrec, @pubrec_mutex, MAX_PUBREC)
-      @sender.check_ack_alive(@waiting_pubrel, @pubrel_mutex, MAX_PUBREL)
-      @sender.check_ack_alive(@waiting_pubcomp, @pubcomp_mutex, MAX_PUBCOMP)
+      @sender.check_ack_alive(@waiting_puback, @puback_mutex)
+      @sender.check_ack_alive(@waiting_pubrec, @pubrec_mutex)
+      @sender.check_ack_alive(@waiting_pubrel, @pubrel_mutex)
+      @sender.check_ack_alive(@waiting_pubcomp, @pubcomp_mutex)
     end
 
     def flush_publisher
-      @puback_mutex.synchronize {
+      @puback_mutex.synchronize do
         @waiting_puback = []
-      }
-      @pubrec_mutex.synchronize {
+      end
+      @pubrec_mutex.synchronize do
         @waiting_pubrec = []
-      }
-      @pubrel_mutex.synchronize {
+      end
+      @pubrel_mutex.synchronize do
         @waiting_pubrel = []
-      }
-      @pubcomp_mutex.synchronize {
+      end
+      @pubcomp_mutex.synchronize do
         @waiting_pubcomp = []
-      }
+      end
     end
   end
 end
