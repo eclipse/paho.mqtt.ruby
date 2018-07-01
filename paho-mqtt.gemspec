@@ -11,6 +11,7 @@ Gem::Specification.new do |spec|
 
   spec.summary       = %q{A simple mqtt client gem}
   spec.description   = %q{A simple mqtt client gem}
+
   spec.homepage      = "https://github.com/eclipse/paho.mqtt.ruby"
   spec.license       = "MIT"
 
